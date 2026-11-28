@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import {
   GitManagerError,
@@ -198,6 +199,22 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const hasGitBacking = (handle: VcsDriverRegistry.VcsDriverHandle | null) => {
+    if (!handle) {
+      return Effect.succeed(false);
+    }
+    if (handle.kind === "git") {
+      return Effect.succeed(true);
+    }
+    if (handle.kind === "gitx") {
+      return fileSystem
+        .exists(path.join(handle.repository.rootPath, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+    }
+    return Effect.succeed(false);
+  };
 
   // Nested projects and path aliases must share the checkout's branch-mutation lease.
   const withCheckoutLease = <A, E, R>(rootPath: string, effect: Effect.Effect<A, E, R>) =>
@@ -221,7 +238,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (handle.kind !== "git") {
+    if (!(yield* hasGitBacking(handle))) {
       return yield* new GitManagerError({
         operation,
         cwd,
@@ -252,7 +269,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (handle.kind !== "git") {
+    if (!(yield* hasGitBacking(handle))) {
       return yield* new GitCommandError({
         operation,
         command: "vcs-route",
@@ -281,7 +298,7 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      return handle?.kind === "git";
+      return yield* hasGitBacking(handle);
     },
   );
 
@@ -300,7 +317,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    return handle?.kind === "git";
+    return yield* hasGitBacking(handle);
   });
 
   const routeGitManager =
@@ -312,9 +329,8 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
-    repositoryRoot: Effect.fn("GitWorkflowService.repositoryRoot")(function (cwd) {
-      return registry.detect({ cwd }).pipe(
-        Effect.map((handle) => (handle?.kind === "git" ? handle.repository.rootPath : null)),
+    repositoryRoot: Effect.fn("GitWorkflowService.repositoryRoot")(function* (cwd) {
+      const handle = yield* registry.detect({ cwd }).pipe(
         Effect.mapError(
           (cause) =>
             new GitManagerError({
@@ -325,6 +341,7 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+      return (yield* hasGitBacking(handle)) && handle ? handle.repository.rootPath : null;
     }),
     hasCommit: Effect.fn("GitWorkflowService.hasCommit")(function (input) {
       return ensureGitCommand("GitWorkflowService.hasCommit", input.cwd).pipe(

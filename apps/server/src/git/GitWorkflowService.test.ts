@@ -79,4 +79,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
       ),
     ),
   );
+
+  it.effect("allows Git workflows on colocated GitX repositories and rejects standalone GitX", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const colocated = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-gitx-coloc-" });
+      const standalone = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-gitx-only-" });
+      yield* fileSystem.makeDirectory(`${colocated}/.git`, { recursive: true });
+      yield* fileSystem.makeDirectory(`${colocated}/.gitx`, { recursive: true });
+      yield* fileSystem.makeDirectory(`${standalone}/.gitx`, { recursive: true });
+
+      const makeHandle = (rootPath: string) =>
+        ({
+          kind: "gitx",
+          repository: { rootPath },
+        }) as VcsDriverRegistry.VcsDriverHandle;
+
+      const workflowLayer = GitWorkflowService.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+            detect: (input) => Effect.succeed(makeHandle(input.cwd)),
+            resolve: (input) => Effect.succeed(makeHandle(input.cwd)),
+          }),
+        ),
+        Layer.provide(Layer.mock(GitManager.GitManager)({})),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      );
+
+      yield* Effect.gen(function* () {
+        const workflow = yield* GitWorkflowService.GitWorkflowService;
+        assert.strictEqual(yield* workflow.repositoryRoot(colocated), colocated);
+        assert.strictEqual(yield* workflow.repositoryRoot(standalone), null);
+      }).pipe(Effect.provide(workflowLayer));
+    }).pipe(Effect.scoped),
+  );
 });

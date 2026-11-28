@@ -119,12 +119,26 @@ export const make = Effect.gen(function* () {
       return yield* detectWithDriver(requestedKind, driver, input.cwd);
     }
 
+    const detectedGitx = yield* detectWithDriver("gitx", gitx, input.cwd);
     const detectedGit = yield* detectWithDriver("git", git, input.cwd);
-    if (detectedGit !== null) {
+    if (detectedGitx === null) {
       return detectedGit;
     }
+    if (detectedGit === null) {
+      return detectedGitx;
+    }
 
-    return yield* detectWithDriver("gitx", gitx, input.cwd);
+    // Prefer whichever repository root is deeper (more specific to cwd).
+    // On colocated repositories (same rootPath), prefer GitX.
+    const gitxRoot = path.resolve(detectedGitx.repository.rootPath);
+    const gitRoot = path.resolve(detectedGit.repository.rootPath);
+    const relative = path.relative(gitxRoot, gitRoot);
+    const gitIsStrictlyNestedInsideGitx =
+      relative !== "" &&
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative);
+    return gitIsStrictlyNestedInsideGitx ? detectedGit : detectedGitx;
   });
 
   // Symlinks can put cwd outside root; then inspect cwd alone.

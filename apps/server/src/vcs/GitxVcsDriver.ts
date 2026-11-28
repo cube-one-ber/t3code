@@ -66,6 +66,37 @@ function normalizePosixPath(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+/, "");
 }
 
+function parseColocatedGitRemoteVerboseOutput(stdout: string): ReadonlyArray<VcsRemote> {
+  const remotes = new Map<string, { url?: string; pushUrl?: string }>();
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    const match = /^(\S+)\s+(.+?)\s+\((fetch|push)\)$/.exec(line);
+    if (!match) continue;
+    const [, name, url, direction] = match;
+    if (!name || !url) continue;
+    const current = remotes.get(name) ?? {};
+    if (direction === "fetch" && !current.url) {
+      current.url = url;
+    } else if (direction === "push" && !current.pushUrl) {
+      current.pushUrl = url;
+    }
+    remotes.set(name, current);
+  }
+  return Array.from(remotes.entries()).flatMap(([name, remote]) => {
+    const url = remote.url ?? remote.pushUrl;
+    if (!url) return [];
+    return [
+      {
+        name,
+        url,
+        pushUrl: remote.pushUrl ? Option.some(remote.pushUrl) : Option.none(),
+        isPrimary: name === "origin",
+      },
+    ];
+  });
+}
+
 export function parseGitxRemoteListOutput(stdout: string): ReadonlyArray<VcsRemote> {
   const trimmed = stdout.trim();
   if (trimmed.length === 0 || trimmed === "No remotes configured.") {
@@ -613,8 +644,29 @@ export const makeVcsDriver = Effect.gen(function* () {
       });
     }
 
+    let remotes = parseGitxRemoteListOutput(result.stdout);
+    if (remotes.length === 0) {
+      const repository = yield* detectRepository(cwd);
+      if (repository && (yield* existsSafe(path.join(repository.rootPath, ".git")))) {
+        const gitRemotes = yield* vcsProcess
+          .run({
+            operation: "GitxVcsDriver.listRemotes.colocatedGit",
+            command: "git",
+            args: ["-C", repository.rootPath, "remote", "-v"],
+            cwd: repository.rootPath,
+            allowNonZeroExit: true,
+            timeoutMs: 5_000,
+            maxOutputBytes: 64 * 1024,
+          })
+          .pipe(Effect.orElseSucceed(() => null));
+        if (gitRemotes && gitRemotes.exitCode === 0) {
+          remotes = parseColocatedGitRemoteVerboseOutput(gitRemotes.stdout);
+        }
+      }
+    }
+
     return {
-      remotes: parseGitxRemoteListOutput(result.stdout),
+      remotes,
       freshness: yield* nowFreshness(),
     };
   });
@@ -820,6 +872,29 @@ export const makeVcsDriver = Effect.gen(function* () {
       if (!repository?.metadataPath) return false;
       const store = yield* readCheckpointStore(repository.metadataPath);
       return Object.hasOwn(store, input.checkpointRef);
+    }),
+
+    copyCheckpointRef: Effect.fn("GitxVcsDriver.checkpoints.copyCheckpointRef")(function* (input) {
+      const operation = "GitxVcsDriver.checkpoints.copyCheckpointRef";
+      const repository = yield* detectRepository(input.cwd);
+      if (!repository?.metadataPath) return false;
+      const metadataPath = repository.metadataPath;
+
+      return yield* withCheckpointLock(
+        metadataPath,
+        Effect.gen(function* () {
+          const store = yield* readCheckpointStore(metadataPath);
+          const source = store[input.fromCheckpointRef];
+          if (source === undefined) {
+            return false;
+          }
+          if (!Object.hasOwn(store, input.toCheckpointRef)) {
+            store[input.toCheckpointRef] = source;
+            yield* writeCheckpointStore(operation, input.cwd, metadataPath, store);
+          }
+          return true;
+        }),
+      );
     }),
 
     restoreCheckpoint: Effect.fn("GitxVcsDriver.checkpoints.restoreCheckpoint")(function* (input) {

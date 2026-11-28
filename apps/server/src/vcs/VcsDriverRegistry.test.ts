@@ -184,7 +184,7 @@ describe("VcsDriverRegistry", () => {
   );
 
   it.effect(
-    "detects pure GitX repositories and honors explicit gitx selection on colocated repos",
+    "detects pure and colocated GitX repositories, honors explicit git override, and prefers deeper nested git repos",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -202,10 +202,19 @@ describe("VcsDriverRegistry", () => {
 
           yield* fs.makeDirectory(path.join(repoDir, ".git"));
           const colocatedAuto = yield* registry.detect({ cwd: repoDir });
-          assert.equal(colocatedAuto?.kind, "git");
+          assert.equal(colocatedAuto?.kind, "gitx");
 
-          const colocatedExplicit = yield* registry.detect({ cwd: repoDir, requestedKind: "gitx" });
-          assert.equal(colocatedExplicit?.kind, "gitx");
+          const colocatedExplicitGit = yield* registry.detect({
+            cwd: repoDir,
+            requestedKind: "git",
+          });
+          assert.equal(colocatedExplicitGit?.kind, "git");
+
+          const nestedGitDir = path.join(repoDir, "nested-git");
+          yield* fs.makeDirectory(path.join(nestedGitDir, ".git"), { recursive: true });
+          const nestedAuto = yield* registry.detect({ cwd: nestedGitDir });
+          assert.equal(nestedAuto?.kind, "git");
+          assert.equal(nestedAuto?.repository.rootPath, nestedGitDir);
 
           yield* fs.remove(path.join(repoDir, ".git"), { recursive: true });
           yield* fs.remove(path.join(repoDir, ".gitx"), { recursive: true });

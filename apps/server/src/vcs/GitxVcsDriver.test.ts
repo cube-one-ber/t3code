@@ -252,6 +252,35 @@ describe("GitxVcsDriver operations", () => {
     }),
   );
 
+  it.effect("falls back to colocated git remotes when no gitx remote is configured", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-gitx-coloc-remote-" });
+      yield* fs.makeDirectory(path.join(repoDir, ".git"), { recursive: true });
+      yield* fs.makeDirectory(path.join(repoDir, ".gitx"), { recursive: true });
+      yield* fs.writeFileString(path.join(repoDir, ".gitx", "config.json"), "{}\n");
+
+      const layer = makeMockProcessLayer((input) => {
+        if (input.command === "gitx") {
+          return okOutput("No remotes configured.\n");
+        }
+        return okOutput(
+          "origin\tgit@github.com:cube-one-ber/gitx.git (fetch)\norigin\tgit@github.com:cube-one-ber/gitx.git (push)\n",
+        );
+      });
+
+      const result = yield* VcsDriver.VcsDriver.pipe(
+        Effect.flatMap((driver) => driver.listRemotes(repoDir)),
+        Effect.provide(layer),
+      );
+      assert.equal(result.remotes.length, 1);
+      assert.equal(result.remotes[0]?.name, "origin");
+      assert.equal(result.remotes[0]?.url, "git@github.com:cube-one-ber/gitx.git");
+      assert.equal(result.remotes[0]?.isPrimary, true);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("captures, diffs, restores, and deletes GitX checkpoints", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -301,6 +330,28 @@ describe("GitxVcsDriver operations", () => {
         assert.equal(
           yield* driver.checkpoints.hasCheckpointRef({ cwd: repoDir, checkpointRef: ref0 }),
           true,
+        );
+
+        const copiedRef = CheckpointRef.make("refs/t3/checkpoints/t1/turn/0-copy");
+        assert.equal(
+          yield* driver.checkpoints.copyCheckpointRef({
+            cwd: repoDir,
+            fromCheckpointRef: ref0,
+            toCheckpointRef: copiedRef,
+          }),
+          true,
+        );
+        assert.equal(
+          yield* driver.checkpoints.hasCheckpointRef({ cwd: repoDir, checkpointRef: copiedRef }),
+          true,
+        );
+        assert.equal(
+          yield* driver.checkpoints.copyCheckpointRef({
+            cwd: repoDir,
+            fromCheckpointRef: CheckpointRef.make("refs/t3/checkpoints/t1/turn/missing"),
+            toCheckpointRef: copiedRef,
+          }),
+          false,
         );
 
         step = 1;

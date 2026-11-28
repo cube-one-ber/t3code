@@ -49,6 +49,7 @@
   "7a92629ebbd4373b": "Nie udało się odczytać bazy plików cookie przeglądarki.",
   "868f7db396cd02e1": "Zainstaluj Gita z {url} lub menedżerem pakietów.",
   "1fcffc9b1a7d921c": "Zainstaluj Jujutsu poleceniem {command} lub z {url}.",
+  "d2e88e055cf24217": "Zainstaluj GitX z {url}.",
   "94168222df47e6a3": "Zainstaluj narzędzie wiersza poleceń GitHuba ({cli}) przez {url} lub menedżerem pakietów (na przykład {command}).",
   "6ff697b80a1714c7": "Zainstaluj narzędzie wiersza poleceń GitLaba ({cli}) z {url} lub menedżerem pakietów (na przykład {command}).",
   "929a11e234f6e5d9": "Zainstaluj narzędzia wiersza poleceń Azure ({cli}), a potem włącz obsługę Azure DevOps poleceniem {command}.",

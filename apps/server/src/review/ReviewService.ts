@@ -93,6 +93,21 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const supportsGitReview = (handle: VcsDriverRegistry.VcsDriverHandle | null) => {
+    if (!handle) {
+      return Effect.succeed(false);
+    }
+    if (handle.kind === "git") {
+      return Effect.succeed(true);
+    }
+    if (handle.kind === "gitx") {
+      return fileSystem
+        .exists(path.join(handle.repository.rootPath, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+    }
+    return Effect.succeed(false);
+  };
+
   const getBranchCommits: ReviewService["Service"]["getBranchCommits"] = Effect.fn(
     "ReviewService.getBranchCommits",
   )(function* (input) {
@@ -100,7 +115,7 @@ export const make = Effect.gen(function* () {
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (!handle) return { commits: [], truncated: false };
-    if (handle.kind !== "git") {
+    if (!(yield* supportsGitReview(handle))) {
       return yield* new VcsUnsupportedOperationError({
         operation: "ReviewService.getBranchCommits",
         kind: handle.kind,
@@ -116,7 +131,7 @@ export const make = Effect.gen(function* () {
     yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
-    if (!handle || handle.kind !== "git") {
+    if (!(yield* supportsGitReview(handle))) {
       return {
         cwd: input.cwd,
         generatedAt: yield* DateTime.now,
@@ -133,7 +148,7 @@ export const make = Effect.gen(function* () {
     yield* assertWorkspaceBoundCwd("ReviewService.getDiffFileContents", input.cwd);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
-    if (handle?.kind !== "git") {
+    if (!(yield* supportsGitReview(handle))) {
       return yield* new VcsUnsupportedOperationError({
         operation: "ReviewService.getDiffFileContents",
         kind: handle?.kind ?? "unknown",
